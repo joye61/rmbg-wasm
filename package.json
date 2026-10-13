@@ -21,14 +21,15 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "rmbg-batch": "./bin/rmbg-batch.mjs"
+    "rmbg-batch": "bin/rmbg-batch.mjs"
   },
   "files": [
     "src",
     "assets",
     "bin",
     "examples",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "sideEffects": false,
   "keywords": [
@@ -52,7 +53,10 @@
   "scripts": {
     "test:node": "node test/node-test.mjs",
     "test:browser": "node test/serve.mjs",
-    "test:threads": "node test/serve-coop.mjs . 8789"
+    "test:threads": "node test/serve-coop.mjs . 8789",
+    "prepublishOnly": "node scripts/prepublish-check.mjs",
+    "pub": "npm publish",
+    "pub:dry": "npm publish --dry-run"
   },
   "repository": {
     "type": "git",
@@ -62,5 +66,9 @@
     "url": "https://github.com/joye61/rmbg-wasm/issues"
   },
   "homepage": "https://github.com/joye61/rmbg-wasm#readme",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
   "license": "MIT"
 }

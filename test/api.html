@@ -1,0 +1,181 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rmbg-wasm API test</title>
+<script type="module">
+import { removeBackground, colorize, harmonize, edgeEnhance, batch, load, dispose, isSupported, DEFAULT_ASSETS } from '../src/index.js';
+
+window.__log = [];
+const log = (...a) => { window.__log.push(a.map(x => (x && x.stack) || String(x)).join(' ')); console.log(...a); };
+
+const results = [];
+async function t(name, fn) {
+  const started = performance.now();
+  try {
+    const info = await fn();
+    results.push({ name, ok: true, ms: Math.round(performance.now() - started), info });
+  } catch (e) {
+    results.push({ name, ok: false, ms: Math.round(performance.now() - started), error: String((e && e.message) || e) });
+  }
+}
+function transparentCount(data) { let n = 0; for (let i = 3; i < data.length; i += 4) if (data[i] === 0) n++; return n; }
+function plausible(id) { return id && id.width === 64 && id.height === 64 && transparentCount(id.data) > 0; }
+
+(async () => {
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = 'sample.jpg'; });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width; canvas.height = img.height;
+    canvas.getContext('2d').drawImage(img, 0, 0);
+    const imageData = canvas.getContext('2d').getImageData(0, 0, img.width, img.height);
+    const imageBitmap = await createImageBitmap(img);
+    const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
+    const arrayBuffer = await blob.arrayBuffer();
+    const padded = new Uint8Array(arrayBuffer.byteLength + 8);
+    padded.set(new Uint8Array(arrayBuffer), 8);            // non-zero byteOffset view
+    const view = padded.subarray(8);
+    const rgba = { data: new Uint8ClampedArray(imageData.data), width: img.width, height: img.height };
+
+    await t('isSupported()', () => { if (!isSupported()) throw new Error('not supported'); });
+    await t('DEFAULT_ASSETS shape', () => {
+      for (const k of ['glue', 'wasm', 'wasmSimd', 'glueThreaded', 'pthreadWorker', 'wasmThreads', 'wasmSimdThreads', 'model', 'harm']) {
+        if (!DEFAULT_ASSETS[k]) throw new Error('missing ' + k);
+      }
+    });
+
+    // ---- load / preload ----
+    await t('load(harmonization:true)', async () => {
+      const info = await load({ harmonization: true });
+      if (JSON.stringify(info.stages) !== JSON.stringify(['wasm', 'model', 'harmonization'])) throw new Error('bad stages ' + JSON.stringify(info));
+      return info;
+    });
+
+    // ---- input types ----
+    const inputs = {
+      'input: url string': 'sample.jpg',
+      'input: Blob': blob,
+      'input: ArrayBuffer': arrayBuffer,
+      'input: Uint8Array view (offset)': view,
+      'input: ImageData': imageData,
+      'input: ImageBitmap': imageBitmap,
+      'input: HTMLImageElement': img,
+      'input: HTMLCanvasElement': canvas,
+      'input: {data,width,height}': rgba,
+    };
+    for (const [name, value] of Object.entries(inputs)) {
+      await t(name, async () => {
+        const out = await removeBackground(value, { output: 'imageData' });
+        if (!plausible(out)) throw new Error('implausible output');
+        return out.width + 'x' + out.height;
+      });
+    }
+
+    // ---- output formats ----
+    const outputs = {
+      'output: blob': async (o) => { if (!(o instanceof Blob) || o.type !== 'image/png' || !o.size) throw new Error('bad blob'); return o.type + ':' + o.size; },
+      'output: imageData': async (o) => { if (!(o instanceof ImageData) || !plausible(o)) throw new Error('bad imageData'); return o.width + 'x' + o.height; },
+      'output: arrayBuffer': async (o) => { if (!(o instanceof ArrayBuffer) || o.byteLength !== 64 * 64 * 4) throw new Error('bad arrayBuffer'); return o.byteLength; },
+      'output: uint8array': async (o) => { if (!(o instanceof Uint8Array) || o.length !== 64 * 64 * 4) throw new Error('bad uint8array'); return o.length; },
+      'output: bitmap': async (o) => { if (typeof ImageBitmap === 'undefined' || !(o instanceof ImageBitmap) || o.width !== 64) throw new Error('bad bitmap'); return o.width + 'x' + o.height; },
+      'output: canvas': async (o) => { if (!o || o.width !== 64 || typeof o.getContext !== 'function') throw new Error('bad canvas'); return o.width + 'x' + o.height; },
+    };
+    for (const [name, check] of Object.entries(outputs)) {
+      const key = name.split(': ')[1];
+      await t(name, async () => {
+        const out = await removeBackground('sample.jpg', { output: key });
+        return await check(out);
+      });
+    }
+
+    // ---- HD / multi-scale ----
+    await t('hd:true refines alpha (differs from default)', async () => {
+      const def = await removeBackground('sample.jpg', { output: 'imageData' });
+      const hd = await removeBackground('sample.jpg', { output: 'imageData', hd: true });
+      if (!hd || hd.width !== 64 || hd.height !== 64) throw new Error('bad shape');
+      let diff = 0;
+      for (let i = 0; i < def.data.length; i++) if (def.data[i] !== hd.data[i]) diff++;
+      if (diff === 0) throw new Error('hd did not change the output');
+      return 'diff channels=' + diff;
+    });
+    await t('hd options + maxSize upsampling', async () => {
+      const o = await removeBackground('sample.jpg', { output: 'imageData', maxSize: 32, hd: { radius: 4, eps: 1e-3, strength: 0.6 } });
+      if (o.width !== 64 || o.height !== 64) throw new Error('bad shape');
+      return o.width + 'x' + o.height;
+    });
+
+    // ---- colorize / edgeEnhance ----
+    const cutout = await removeBackground('sample.jpg', { output: 'imageData' });
+    await t('colorize(explicit mask, imageData)', async () => { const o = await colorize('sample.jpg', cutout, { output: 'imageData' }); if (!o || o.width !== 64) throw new Error('bad'); return o.width + 'x' + o.height; });
+    await t('colorize(auto mask) + harmonize alias', async () => { const o = await harmonize('sample.jpg'); if (!(o instanceof Blob)) throw new Error('bad'); return o.size; });
+    await t('edgeEnhance(explicit mask, imageData)', async () => { const o = await edgeEnhance('sample.jpg', cutout, { output: 'imageData' }); if (!o || o.width !== 64) throw new Error('bad'); return o.width + 'x' + o.height; });
+    await t('edgeEnhance(auto mask)', async () => { const o = await edgeEnhance('sample.jpg', undefined, { output: 'uint8array' }); if (o.length !== 64 * 64 * 4) throw new Error('bad'); return o.length; });
+
+    // ---- batch ----
+    await t('batch(removeBackground x2, progress index/count)', async () => {
+      const seen = [];
+      const r = await batch(['sample.jpg', 'sample.jpg'], { op: 'removeBackground', output: 'imageData', onProgress: (s) => seen.push(s) });
+      if (r.length !== 2 || !r.every((x) => x.ok)) throw new Error('bad results');
+      if (!seen.some((s) => s.index === 1 && s.count === 2 && s.op === 'batch')) throw new Error('missing batch metadata');
+      const doneCount = seen.filter((s) => s.phase === 'done').length;
+      if (doneCount !== 1) throw new Error('expected exactly 1 done, got ' + doneCount);
+      return 'ok';
+    });
+    await t('batch(colorize, {image})', async () => {
+      const r = await batch([{ image: 'sample.jpg' }], { op: 'colorize', output: 'imageData' });
+      if (!r[0].ok) throw new Error(String(r[0].error));
+      return 'ok';
+    });
+    await t('batch(continueOnError)', async () => {
+      const r = await batch(['sample.jpg', 12345], { op: 'removeBackground', output: 'imageData', continueOnError: true });
+      if (r[0].ok !== true || r[1].ok !== false) throw new Error('unexpected ' + JSON.stringify(r.map((x) => x.ok)));
+      return 'ok';
+    });
+
+    // ---- error handling ----
+    await t('invalid input rejects', async () => {
+      try { await removeBackground(12345); throw new Error('should have thrown'); }
+      catch (e) { if (/Unsupported input/.test(e.message)) return e.message.slice(0, 40); throw e; }
+    });
+    await t('missing model rejects', async () => {
+      try { await removeBackground('sample.jpg', { assets: { model: '/no-such-model.tf' } }); throw new Error('should have thrown'); }
+      catch (e) { if (/model/i.test(e.message)) return e.message.slice(0, 60); throw e; }
+    });
+
+    // ---- abort ----
+    await t('abort signal', async () => {
+      const ac = new AbortController();
+      const p = removeBackground('sample.jpg', { output: 'imageData', signal: ac.signal });
+      setTimeout(() => ac.abort(), 250);
+      try { await p; throw new Error('should have aborted'); }
+      catch (e) { if (/Aborted/.test(e.message)) return 'aborted'; throw e; }
+    });
+
+    // ---- in-memory model (modelData) ----
+    await t('assets.modelData (in-memory weights)', async () => {
+      const modelData = await (await fetch(DEFAULT_ASSETS.model)).arrayBuffer();
+      const out = await removeBackground('sample.jpg', { output: 'imageData', assets: { modelData } });
+      if (!plausible(out)) throw new Error('implausible');
+      return out.width + 'x' + out.height;
+    });
+    await t('relative asset path resolves', async () => {
+      const out = await removeBackground('sample.jpg', { output: 'imageData', assets: { model: '../assets/rmbg.model.tf' } });
+      if (!plausible(out)) throw new Error('implausible');
+      return 'ok';
+    });
+
+    // ---- threads toggle ----
+    await t('load(threads:false) -> useThreads false', async () => { const i = await load({ threads: false }); if (i.useThreads !== false) throw new Error('expected single-thread'); return i; });
+    await t('load() -> auto threads', async () => { const i = await load(); if (i.useThreads !== true) throw new Error('expected threads (crossOriginIsolated page)'); return i; });
+
+    // ---- dispose + reuse ----
+    await t('dispose() then reuse', async () => { dispose(); const o = await removeBackground('sample.jpg', { output: 'imageData' }); if (!plausible(o)) throw new Error('bad after dispose'); return 'reused'; });
+
+    const fail = results.filter((r) => !r.ok);
+    window.__result = { pass: results.length - fail.length, fail: fail.length, failures: fail, results };
+    log('DONE', JSON.stringify({ pass: results.length - fail.length, fail: fail.length, failures: fail.map((f) => f.name + ': ' + f.error) }));
+  } catch (e) {
+    window.__error = String((e && e.stack) || e);
+    log('FATAL', e);
+  }
+  window.__ready = true;
+})();
+</script>

@@ -1,0 +1,47 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rmbg-wasm HD real image</title>
+<script type="module">
+import { removeBackground } from '../src/index.js';
+
+window.__log = [];
+const log = (...a) => { window.__log.push(a.map(x => (x && x.stack) || String(x)).join(' ')); console.log(...a); };
+
+function toURL(id) {
+  const cv = document.createElement('canvas'); cv.width = id.width; cv.height = id.height;
+  cv.getContext('2d').putImageData(id, 0, 0);
+  return cv.toDataURL('image/png');
+}
+function stats(data) {
+  let o = 0, t = 0, s = 0;
+  for (let i = 3; i < data.length; i += 4) { const a = data[i]; if (a === 255) o++; else if (a === 0) t++; else s++; }
+  return { opaque: o, transp: t, semi: s };
+}
+
+(async () => {
+  try {
+    let t = performance.now();
+    const def = await removeBackground('real.png', { output: 'imageData' });
+    const defMs = Math.round(performance.now() - t);
+    window.__cutoutURL = toURL(def);
+
+    t = performance.now();
+    const hd = await removeBackground('real.png', { output: 'imageData', hd: true });
+    const hdMs = Math.round(performance.now() - t);
+    window.__outURL = toURL(hd);
+
+    window.__result = {
+      size: hd.width + 'x' + hd.height,
+      defaultMs: defMs,
+      hdMs,
+      defaultStats: stats(def.data),
+      hdStats: stats(hd.data),
+    };
+    log('DONE', JSON.stringify(window.__result));
+  } catch (e) {
+    window.__error = String((e && e.stack) || e);
+    log('ERR', e);
+  }
+  window.__ready = true;
+})();
+</script>

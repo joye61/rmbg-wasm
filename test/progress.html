@@ -1,0 +1,102 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rmbg-wasm progress interface test</title>
+<script type="module">
+import { load, removeBackground, batch } from '../src/index.js';
+
+window.__log = [];
+const log = (...a) => { window.__log.push(a.map(x => (x && x.stack) || String(x)).join(' ')); console.log(...a); };
+
+(async () => {
+  try {
+    const nodesBefore = document.body.children.length;
+
+    // ---- 1) Preload with detailed init progress -------------------------
+    const preloadStages = [];
+    let preloadOk = true;
+    const preloadStates = [];
+    const info = await load({
+      harmonization: true,
+      onProgress: (s) => {
+        preloadStates.push(s);
+        if ('overall' in s) preloadOk = false;
+        if (s.phase === 'loading') {
+          if (!s.stage || typeof s.stageIndex !== 'number' || typeof s.stageCount !== 'number') preloadOk = false;
+          if (s.stageIndex < 0 || s.stageIndex >= s.stageCount) preloadOk = false;
+          if (s.ratio < 0 || s.ratio > 1) preloadOk = false;
+          if (!preloadStages.includes(s.stage)) preloadStages.push(s.stage);
+        }
+      },
+    });
+
+    // ---- 2) removeBackground progress -----------------------------------
+    const phases = new Set();
+    let loadEvents = 0, procEvents = 0, stateOk = true, noOverall = true, noUiInjected = true;
+    let doneCount = 0, lastRatioByPhase = {};
+    await removeBackground('sample.jpg', {
+      output: 'imageData',
+      onProgress: (s) => {
+        const shapeOk = s && typeof s === 'object'
+          && typeof s.op === 'string' && typeof s.phase === 'string'
+          && typeof s.value === 'number' && typeof s.max === 'number'
+          && typeof s.ratio === 'number' && typeof s.label === 'string';
+        if (!shapeOk) stateOk = false;
+        if (s.ratio < 0 || s.ratio > 1) stateOk = false;
+        if ('overall' in s) noOverall = false;
+        if (document.querySelector('[data-rmbg-progress]')) noUiInjected = false;
+        const key = s.phase + ':' + (s.stage || '');
+        if (s.ratio < (lastRatioByPhase[key] || 0) - 1e-9 && s.phase !== 'done') stateOk = false;
+        lastRatioByPhase[key] = Math.max(lastRatioByPhase[key] || 0, s.ratio);
+        phases.add(s.phase);
+        if (s.phase === 'loading') { loadEvents++; if (!s.stage) stateOk = false; }
+        if (s.phase === 'processing') procEvents++;
+        if (s.phase === 'done') doneCount++;
+      },
+    });
+
+    const nodesAfter = document.body.children.length;
+
+    let aliasCalled = false;
+    await removeBackground('sample.jpg', { output: 'imageData', progress: () => { aliasCalled = true; } });
+
+    let secondProc = 0;
+    await removeBackground('sample.jpg', { output: 'imageData', onProgress: (s) => { if (s.phase === 'processing') secondProc++; } });
+
+    const batchStates = [];
+    await batch(['sample.jpg', 'sample.jpg'], {
+      op: 'removeBackground',
+      output: 'imageData',
+      onProgress: (s) => batchStates.push({ phase: s.phase, index: s.index, count: s.count, op: s.op }),
+    });
+
+    window.__result = {
+      preload: {
+        stages: preloadStages,
+        returnedStages: info.stages,
+        states: preloadStates.length,
+        ok: preloadOk,
+        useSimd: info.useSimd,
+        useThreads: info.useThreads,
+      },
+      phases: [...phases],
+      loadEvents,
+      procEvents,
+      stateOk,
+      noOverall,
+      noUiInjected,
+      doneCount,
+      aliasCalled,
+      secondProc,
+      batchHasIndex: batchStates.some((s) => s.index === 1 && s.count === 2),
+      batchOp: batchStates[0] && batchStates[0].op,
+      batchDone: batchStates.some((s) => s.phase === 'done'),
+      domUntouched: nodesAfter === nodesBefore,
+    };
+    log('DONE', JSON.stringify(window.__result));
+  } catch (e) {
+    window.__error = String((e && e.stack) || e);
+    log('ERR', e);
+  }
+  window.__ready = true;
+})();
+</script>

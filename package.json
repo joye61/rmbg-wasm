@@ -1,0 +1,66 @@
+{
+  "name": "rmbg-wasm",
+  "version": "1.0.0",
+  "description": "Browser WebAssembly background removal, AI coloring (harmonization) and edge enhancement. Runs fully client-side, no upload, no API key.",
+  "type": "module",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "browser": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "browser": "./src/index.js",
+      "node": "./src/node.js",
+      "import": "./src/index.js",
+      "default": "./src/index.js"
+    },
+    "./png": "./src/png.js",
+    "./assets/*": "./assets/*",
+    "./worker": "./src/worker.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "rmbg-batch": "./bin/rmbg-batch.mjs"
+  },
+  "files": [
+    "src",
+    "assets",
+    "bin",
+    "examples",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "keywords": [
+    "background-removal",
+    "remove-background",
+    "background",
+    "colorize",
+    "harmonization",
+    "edge-enhancement",
+    "wasm",
+    "webassembly",
+    "rmbg",
+    "matting",
+    "image",
+    "transparent",
+    "browser"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test:node": "node test/node-test.mjs",
+    "test:browser": "node test/serve.mjs",
+    "test:threads": "node test/serve-coop.mjs . 8789"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joye61/rmbg-wasm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/joye61/rmbg-wasm/issues"
+  },
+  "homepage": "https://github.com/joye61/rmbg-wasm#readme",
+  "license": "MIT"
+}

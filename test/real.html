@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rmbg-wasm real image test</title>
+<script type="module">
+import { load, removeBackground } from '../src/index.js';
+
+window.__log = [];
+const log = (...a) => { window.__log.push(a.map(x => (x && x.stack) || String(x)).join(' ')); console.log(...a); };
+
+(async () => {
+  try {
+    const info = await load();
+    window.__init = info;
+    log('init', JSON.stringify(info), 'crossOriginIsolated=', self.crossOriginIsolated);
+
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = 'real.png'; });
+    log('input', img.width + 'x' + img.height);
+
+    const t0 = performance.now();
+    let last = 0;
+    const blob = await removeBackground(img, {
+      output: 'blob',
+      progress: (r) => { if (r - last > 0.25) { last = r; log('progress', r.toFixed(2)); } },
+    });
+    const ms = Math.round(performance.now() - t0);
+    log('removeBackground done', ms + 'ms', 'blob=' + blob.size);
+
+    const bmp = await createImageBitmap(blob);
+    const cv = document.createElement('canvas');
+    cv.width = bmp.width; cv.height = bmp.height;
+    cv.getContext('2d').drawImage(bmp, 0, 0);
+    window.__outURL = cv.toDataURL('image/png');
+    window.__result = { width: bmp.width, height: bmp.height, blobSize: blob.size, ms };
+    log('DONE', JSON.stringify(window.__result));
+  } catch (e) {
+    window.__error = String((e && e.stack) || e);
+    log('ERR', e);
+  }
+  window.__ready = true;
+})();
+</script>

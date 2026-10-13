@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rmbg-wasm ops test</title>
+<script type="module">
+import { removeBackground, colorize, edgeEnhance } from '../src/index.js';
+
+window.__log = [];
+const log = (...a) => { window.__log.push(a.map(x => (x && x.stack) || String(x)).join(' ')); console.log(...a); };
+
+function imageDataToURL(id) {
+  const cv = document.createElement('canvas'); cv.width = id.width; cv.height = id.height;
+  cv.getContext('2d').putImageData(id, 0, 0);
+  return cv.toDataURL('image/png');
+}
+async function blobToURL(blob) {
+  const bmp = await createImageBitmap(blob);
+  const cv = document.createElement('canvas'); cv.width = bmp.width; cv.height = bmp.height;
+  cv.getContext('2d').drawImage(bmp, 0, 0);
+  return cv.toDataURL('image/png');
+}
+
+(async () => {
+  try {
+    const t0 = performance.now();
+    const cutout = await removeBackground('sample.jpg', { output: 'imageData' });
+    window.__cutoutURL = imageDataToURL(cutout);
+    log('cutout', cutout.width, cutout.height);
+
+    const t1 = performance.now();
+    const harm = await colorize('sample.jpg', cutout);
+    window.__harmURL = await blobToURL(harm);
+    log('colorize', harm.type, harm.size, Math.round(performance.now() - t1) + 'ms');
+
+    const t2 = performance.now();
+    const edge = await edgeEnhance('sample.jpg', cutout);
+    window.__edgeURL = await blobToURL(edge);
+    log('edgeEnhance', edge.type, edge.size, Math.round(performance.now() - t2) + 'ms');
+
+    // auto-mask path (mask omitted)
+    const autoEdge = await edgeEnhance('sample.jpg', undefined, { output: 'imageData' });
+    log('edgeEnhance(auto-mask)', autoEdge.width, autoEdge.height);
+
+    log('ALL DONE', Math.round(performance.now() - t0) + 'ms');
+  } catch (e) {
+    window.__error = String((e && e.stack) || e);
+    log('ERR', e);
+  }
+  window.__ready = true;
+})();
+</script>

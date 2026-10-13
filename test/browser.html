@@ -1,0 +1,47 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rmbg-wasm test</title>
+<script type="module">
+import { removeBackground, load, isSupported } from '../src/index.js';
+
+window.__log = [];
+const log = (...a) => { window.__log.push(a.map(x => (x && x.stack) || String(x)).join(' ')); console.log(...a); };
+
+(async () => {
+  try {
+    log('supported', isSupported());
+    const t0 = performance.now();
+    let last = 0;
+    const blob = await removeBackground('sample.jpg', {
+      output: 'blob',
+      progress: (ratio) => { if (ratio - last > 0.25) { last = ratio; log('progress', ratio.toFixed(2)); } },
+    });
+    const ms = Math.round(performance.now() - t0);
+    const bmp = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = bmp.width; canvas.height = bmp.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bmp, 0, 0);
+    const id = ctx.getImageData(0, 0, bmp.width, bmp.height);
+    let opaque = 0, transp = 0, semi = 0, minA = 255, maxA = 0;
+    for (let i = 3; i < id.data.length; i += 4) {
+      const a = id.data[i];
+      if (a === 255) opaque++; else if (a === 0) transp++; else semi++;
+      if (a < minA) minA = a; if (a > maxA) maxA = a;
+    }
+    window.__result = { width: bmp.width, height: bmp.height, opaque, transp, semi, minA, maxA, blobSize: blob.size, blobType: blob.type, ms };
+    window.__outURL = canvas.toDataURL('image/png');
+    log('DONE result', JSON.stringify(window.__result));
+
+    // Second call reusing the same worker (should be faster / no re-init).
+    const t1 = performance.now();
+    const imageData = await removeBackground('sample.jpg', { output: 'imageData' });
+    log('second call', imageData.width, imageData.height, Math.round(performance.now() - t1) + 'ms');
+    window.__reuse = { width: imageData.width, height: imageData.height, ms: Math.round(performance.now() - t1) };
+  } catch (e) {
+    window.__error = String((e && e.stack) || e);
+    log('ERR', e);
+  }
+  window.__ready = true;
+})();
+</script>

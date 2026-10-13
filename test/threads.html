@@ -1,0 +1,44 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rmbg-wasm threads test</title>
+<script type="module">
+import { load, removeBackground, colorize, edgeEnhance } from '../src/index.js';
+
+window.__log = [];
+const log = (...a) => { window.__log.push(a.map(x => (x && x.stack) || String(x)).join(' ')); console.log(...a); };
+window.__crossOriginIsolated = self.crossOriginIsolated;
+window.__hasSAB = typeof SharedArrayBuffer !== 'undefined';
+
+function imageDataToURL(id) {
+  const cv = document.createElement('canvas'); cv.width = id.width; cv.height = id.height;
+  cv.getContext('2d').putImageData(id, 0, 0);
+  return cv.toDataURL('image/png');
+}
+
+(async () => {
+  try {
+    log('crossOriginIsolated', self.crossOriginIsolated, 'SharedArrayBuffer', typeof SharedArrayBuffer !== 'undefined');
+    const info = await load();
+    window.__init = info;
+    log('load ->', JSON.stringify(info));
+
+    const t0 = performance.now();
+    const cutout = await removeBackground('sample.jpg', { output: 'imageData' });
+    window.__cutoutURL = imageDataToURL(cutout);
+    log('removeBackground', Math.round(performance.now() - t0) + 'ms');
+
+    const colored = await colorize('sample.jpg', cutout, { output: 'imageData' });
+    window.__harmURL = imageDataToURL(colored);
+    const edged = await edgeEnhance('sample.jpg', cutout, { output: 'imageData' });
+    window.__edgeURL = imageDataToURL(edged);
+    log('colorize + edgeEnhance ok');
+
+    window.__result = { useThreads: info.useThreads, useSimd: info.useSimd };
+    log('DONE');
+  } catch (e) {
+    window.__error = String((e && e.stack) || e);
+    log('ERR', e);
+  }
+  window.__ready = true;
+})();
+</script>
